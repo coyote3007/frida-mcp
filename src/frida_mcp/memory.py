@@ -2,7 +2,7 @@
 
 import json
 
-from .session import get_api, get_session, with_timeout
+from .session import get_api, with_timeout
 from .hooks import run_script_sync
 
 

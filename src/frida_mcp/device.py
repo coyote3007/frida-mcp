@@ -5,7 +5,7 @@ import time as time_module
 
 import frida
 
-from .session import registry, get_session
+from .session import registry
 from .adb import adb_shell, ensure_selinux_permissive, wait_for_pid
 from .agent import get_agent_source
 
