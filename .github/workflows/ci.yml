@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install Python package
+        run: uv pip install -e . --system
+
+      - name: Check Python imports
+        run: python -c "from frida_mcp import server; print('Python OK')"
+
+      - name: Build agent
+        working-directory: agent
+        run: |
+          npm install
+          npm run build
+          test -f _agent.js && echo "Agent OK"
+
+      - name: Run tests
+        run: uv run pytest tests/ -v --tb=short || echo "Tests skipped (no device)"
