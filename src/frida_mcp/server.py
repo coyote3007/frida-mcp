@@ -1,23 +1,60 @@
 #!/usr/bin/env python3
-"""Frida MCP Server - Mobile security testing via Model Context Protocol."""
+"""
+Frida MCP Server — Mobile security testing via Model Context Protocol.
+
+Exposes Frida dynamic instrumentation tools over SSE transport so the
+malware-lab MCP gateway can aggregate them under the ``frida__`` prefix.
+
+Environment variables:
+    FRIDA_HOST           Bind address (default: 0.0.0.0)
+    FRIDA_PORT           Listen port  (default: 8772)
+    ANDROID_DEVICE_ID    Remote ADB device (e.g. 192.168.2.220:5555)
+    LOG_LEVEL            Logging verbosity (default: INFO)
+"""
 
 import json
 import asyncio
+import logging
+import os
 from typing import Any
 
+import uvicorn
 from mcp.server import Server
-from mcp.server.stdio import stdio_server
+from mcp.server.sse import SseServerTransport
 from mcp.types import TextContent
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Mount, Route
 
 from .tools import TOOLS
 from . import device, adb, memory, android, files, hooks
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+log = logging.getLogger("frida-mcp")
+
+FRIDA_HOST = os.getenv("FRIDA_HOST", "0.0.0.0")
+FRIDA_PORT = int(os.getenv("FRIDA_PORT", "8772"))
 
 
 def call_tool(name: str, arguments: dict) -> Any:
     """Dispatch tool call to implementation."""
 
+    # ADB remote connection management
+    if name == "adb_connect":
+        return adb.adb_connect_remote(
+            arguments["device_address"],
+        )
+    elif name == "adb_disconnect":
+        return adb.adb_disconnect_remote(
+            arguments.get("device_address"),
+        )
+
     # Device & connection
-    if name == "list_devices":
+    elif name == "list_devices":
         return device.list_devices()
     elif name == "list_processes":
         return device.list_processes(arguments.get("device_id"))
@@ -126,30 +163,87 @@ def call_tool(name: str, arguments: dict) -> Any:
         raise ValueError(f"Unknown tool: {name}")
 
 
-async def serve() -> None:
-    """Run the MCP server."""
-    server = Server("frida-mcp")
+# ── MCP server (SSE transport) ────────────────────────────────────────────────
 
-    @server.list_tools()
-    async def list_tools():
-        return TOOLS
+mcp_server = Server("frida-mcp")
 
-    @server.call_tool()
-    async def handle_call_tool(name: str, arguments: dict):
-        try:
-            result = call_tool(name, arguments)
-            return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
-        except Exception as e:
-            return [TextContent(type="text", text=f"Error: {str(e)}")]
 
-    options = server.create_initialization_options()
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, options)
+@mcp_server.list_tools()
+async def _list_tools():
+    return TOOLS
+
+
+@mcp_server.call_tool()
+async def _handle_call_tool(name: str, arguments: dict):
+    try:
+        result = call_tool(name, arguments)
+        return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+    except Exception as e:
+        return [TextContent(type="text", text=f"Error: {str(e)}")]
+
+
+# ── HTTP + SSE app ─────────────────────────────────────────────────────────────
+
+sse_transport = SseServerTransport("/messages/")
+
+
+async def handle_sse(request: Request):
+    """SSE endpoint — AI agents connect here."""
+    try:
+        send = request._send  # noqa: SLF001 — private Starlette API
+    except AttributeError:
+        async def _fallback_send(message):
+            raise RuntimeError("request._send not available; ASGI send interface changed")
+        send = _fallback_send
+
+    async with sse_transport.connect_sse(
+        request.scope, request.receive, send,
+    ) as streams:
+        await mcp_server.run(
+            streams[0], streams[1],
+            mcp_server.create_initialization_options(),
+            stateless=True,
+        )
+    from starlette.responses import Response as StarletteResponse
+    return StarletteResponse()
+
+
+async def health(request: Request) -> JSONResponse:
+    """Health check endpoint."""
+    android_device = os.getenv("ANDROID_DEVICE_ID", "")
+    return JSONResponse({
+        "status": "ok",
+        "service": "frida-mcp",
+        "tools": len(TOOLS),
+        "android_device_id": android_device or None,
+    })
+
+
+app = Starlette(
+    debug=False,
+    routes=[
+        Route("/health", health, methods=["GET"]),
+        Route("/sse", handle_sse, methods=["GET"]),
+        Mount("/messages", app=sse_transport.handle_post_message),
+    ],
+)
 
 
 def main():
     """Entry point."""
-    asyncio.run(serve())
+    log.info("Starting Frida MCP server on %s:%d", FRIDA_HOST, FRIDA_PORT)
+
+    # Auto-connect to remote Android device if configured
+    android_device = os.getenv("ANDROID_DEVICE_ID", "")
+    if android_device:
+        log.info("Auto-connecting ADB to remote device: %s", android_device)
+        try:
+            result = adb.adb_connect_remote(android_device)
+            log.info("ADB connect result: %s", result)
+        except Exception as exc:
+            log.warning("ADB auto-connect failed (device may not be ready): %s", exc)
+
+    uvicorn.run(app, host=FRIDA_HOST, port=FRIDA_PORT, log_level="warning")
 
 
 if __name__ == "__main__":

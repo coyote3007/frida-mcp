@@ -24,6 +24,39 @@ def adb_cmd(cmd: list[str], device_id: str | None = None) -> str:
     return result.stdout.strip()
 
 
+# ── Remote device management ──────────────────────────────────────────────────
+
+def adb_connect_remote(device_address: str) -> dict:
+    """Connect to a remote Android device over the network via ``adb connect``.
+
+    Args:
+        device_address: IP:port of the remote device (e.g. '192.168.2.220:5555').
+    """
+    output = adb_cmd(["connect", device_address])
+    connected = "connected" in output.lower()
+    return {
+        "device_address": device_address,
+        "connected": connected,
+        "output": output,
+    }
+
+
+def adb_disconnect_remote(device_address: str | None = None) -> dict:
+    """Disconnect from a remote Android device (or all if *device_address* is ``None``).
+
+    Args:
+        device_address: IP:port to disconnect, or omit to disconnect all.
+    """
+    cmd = ["disconnect"]
+    if device_address:
+        cmd.append(device_address)
+    output = adb_cmd(cmd)
+    return {
+        "device_address": device_address or "all",
+        "output": output,
+    }
+
+
 def ensure_selinux_permissive(device_id: str | None = None) -> str:
     """Set SELinux to permissive mode (required for Frida on some devices)."""
     current = adb_shell(["su", "-c", "getenforce"], device_id)

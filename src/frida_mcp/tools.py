@@ -3,6 +3,30 @@
 from mcp.types import Tool
 
 TOOLS = [
+    # ── ADB remote device management ──────────────────────────────────────────
+    Tool(
+        name="adb_connect",
+        description="Connect to a remote Android device over the network via ADB. Required before using other tools when the device is a network VM (not USB).",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "device_address": {"type": "string", "description": "IP:port of the remote device (e.g., '192.168.2.220:5555')"},
+            },
+            "required": ["device_address"],
+        },
+    ),
+    Tool(
+        name="adb_disconnect",
+        description="Disconnect from a remote Android device (or all remote devices if device_address is omitted).",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "device_address": {"type": "string", "description": "IP:port to disconnect (optional, omit to disconnect all)"},
+            },
+            "required": [],
+        },
+    ),
+    # ── Device & session management ───────────────────────────────────────────
     Tool(
         name="list_devices",
         description="List all available Frida devices (USB, remote, local)",
