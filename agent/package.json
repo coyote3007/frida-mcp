@@ -7,7 +7,7 @@
   },
   "devDependencies": {
     "@types/frida-gum": "^18.0.0",
-    "frida-compile": "^16.0.0"
+    "frida-compile": "^15.0.0"
   },
   "dependencies": {
     "frida-java-bridge": "^6.0.0"
